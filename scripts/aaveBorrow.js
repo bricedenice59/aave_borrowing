@@ -1,6 +1,7 @@
 const { getWeth } = require("./getWeth");
-const { getNamedAccounts, ethers } = require("hardhat");
+const { getNamedAccounts, ethers, network } = require("hardhat");
 const { networkConfig } = require("../helper-hardhat-config");
+const { extractLTVForCollateralToken } = require("./getLTV");
 
 async function main() {
     var value = ethers.utils.parseEther("0.01");
@@ -12,19 +13,24 @@ async function main() {
     const lendingPool = await getLendingPool(deployer);
     console.log(`LendingPool address: ${lendingPool.address}`);
 
+    console.log("--------------deposit ETH----------------");
     await depositEthCollateral(value, lendingPool, deployer);
+    console.log("-----------------------------------------");
+
+    console.log("--------------borrow DAI----------------");
     await borrow(lendingPool, deployer);
+    console.log("-----------------------------------------");
 }
 
 async function borrow(lendingPool, account) {
-    const daiPrice = await getPrice("DAI");
-    console.log(`DAI/ETH price ${daiPrice.toString()}`);
+    const tokenSymbol = "DAI";
+    const price = await getPrice(tokenSymbol);
+    console.log(`${tokenSymbol}/ETH price ${price.toString()}`);
 
     const { availableBorrowsETH, totalDebtETH } = await getBorrowUserData(lendingPool, account);
-    // 0.77 is the Loan To Value percentage for DAI
-    //https://docs.aave.com/risk/v/aave-v2/asset-risk/risk-parameters#loan-to-value
-    const amountDaiToBorrow = availableBorrowsETH.toString() * 0.77 * (1 / daiPrice.toNumber());
-    const amountDaiToBorrowWei = ethers.utils.parseEther(amountDaiToBorrow.toString());
+    const ltvPercentageForDai = await extractLTVForCollateralToken(tokenSymbol);
+    const amountDaiToBorrow =
+        availableBorrowsETH.toString() * ltvPercentageForDai * (1 / price.toNumber());
     console.log(`You can borrow ${amountDaiToBorrow.toString()} DAI`);
 }
 

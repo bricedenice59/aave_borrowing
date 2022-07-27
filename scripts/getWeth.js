@@ -1,4 +1,4 @@
-const { getNamedAccounts, ethers } = require("hardhat");
+const { getNamedAccounts, ethers, network } = require("hardhat");
 const { networkConfig } = require("../helper-hardhat-config");
 
 //we expect amount to be a value in wei
