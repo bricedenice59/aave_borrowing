@@ -3,8 +3,10 @@ const { getNamedAccounts, ethers, network } = require("hardhat");
 const { networkConfig } = require("../helper-hardhat-config");
 const { extractLTVForCollateralToken } = require("./getLTV");
 
+const tokenSymbol = "DAI";
+
 async function main() {
-    var value = ethers.utils.parseEther("0.01");
+    var value = ethers.utils.parseEther("10");
     await getWeth(value);
 
     const { deployer } = await getNamedAccounts();
@@ -18,20 +20,53 @@ async function main() {
     console.log("-----------------------------------------");
 
     console.log("--------------borrow DAI----------------");
-    await borrow(lendingPool, deployer);
+    const amountDaiToBorrowWei = await borrow(lendingPool, deployer);
     console.log("-----------------------------------------");
+
+    await getBorrowUserData(lendingPool, deployer);
+
+    console.log("--------------repay----------------");
+    await repay(
+        amountDaiToBorrowWei,
+        networkConfig[network.config.chainId].daiToken,
+        lendingPool,
+        deployer
+    );
+    console.log("-----------------------------------------");
+
+    await getBorrowUserData(lendingPool, deployer);
 }
 
 async function borrow(lendingPool, account) {
-    const tokenSymbol = "DAI";
     const price = await getPrice(tokenSymbol);
     console.log(`${tokenSymbol}/ETH price ${price.toString()}`);
 
-    const { availableBorrowsETH, totalDebtETH } = await getBorrowUserData(lendingPool, account);
+    const { availableBorrowsETH } = await getBorrowUserData(lendingPool, account);
     const ltvPercentageForDai = await extractLTVForCollateralToken(tokenSymbol);
     const amountDaiToBorrow =
         availableBorrowsETH.toString() * ltvPercentageForDai * (1 / price.toNumber());
-    console.log(`You can borrow ${amountDaiToBorrow.toString()} DAI`);
+    const amountDaiToBorrowInWei = ethers.utils.parseEther(amountDaiToBorrow.toString());
+    console.log(`You can borrow ${amountDaiToBorrow.toString()} ${tokenSymbol}`);
+
+    const borrowTx = await lendingPool.borrow(
+        networkConfig[network.config.chainId].daiToken,
+        amountDaiToBorrowInWei,
+        1,
+        0,
+        account
+    );
+    await borrowTx.wait(1);
+    console.log("You've borrowed!");
+
+    return amountDaiToBorrowInWei;
+}
+
+async function repay(amount, daiTokenAddress, lendingPool, account) {
+    await approveErc20(daiTokenAddress, lendingPool.address, amount, account);
+
+    const repayTx = await lendingPool.repay(daiTokenAddress, amount, 1, account);
+    await repayTx.wait(1);
+    console.log("Repaid!");
 }
 
 async function getBorrowUserData(lendingPool, account) {
@@ -51,7 +86,12 @@ async function getBorrowUserData(lendingPool, account) {
 async function depositEthCollateral(value, lendingPool, account) {
     //Approve our WETH ERC20 token
     console.log(`Approving WETH with a value of ${value}`);
-    const isApproved = await approve(lendingPool.address, value, account);
+    const isApproved = await approveErc20(
+        networkConfig[network.config.chainId].wethToken,
+        lendingPool.address,
+        value,
+        account
+    );
     console.log(isApproved ? "Approved!" : "There was an issue trying to approve WETH token!");
 
     //Deposit
@@ -75,14 +115,9 @@ async function getLendingPool(account) {
     return lendingPool;
 }
 
-async function approve(spenderAddress, amountToSpend, account) {
-    const iWeth = await ethers.getContractAt(
-        "IWeth",
-        networkConfig[network.config.chainId].wethToken,
-        account
-    );
-
-    const tx = await iWeth.approve(spenderAddress, amountToSpend);
+async function approveErc20(erc20Address, spenderAddress, amountToSpend, signer) {
+    const erc20Token = await ethers.getContractAt("IERC20", erc20Address, signer);
+    const tx = await erc20Token.approve(spenderAddress, amountToSpend);
     const txReceipt = await tx.wait(1);
     return txReceipt.status == 1;
 }
@@ -106,7 +141,8 @@ async function getPrice(tokenSymbol) {
         "AggregatorV3Interface",
         daiEthAddress
     );
-    return (await aggregatorV3Interface.latestRoundData())[1];
+    const latestRoundData = await aggregatorV3Interface.latestRoundData();
+    return latestRoundData[1];
 }
 
 main()
